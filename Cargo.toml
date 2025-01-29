@@ -1,0 +1,17 @@
+[package]
+name = "macro_extra"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy-regex = "3.4.1"
+proc-macro2 = "1.0.93"
+quote = "1.0.38"
+syn = { version = "2.0.96", features = ["full"] }
+
+[lib]
+proc-macro = true
+
+[features]
+default = ["nightly"]
+nightly = []
