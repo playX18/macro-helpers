@@ -1,84 +1,11 @@
-
-use lazy_regex::Captures;
-use proc_macro2::{Group, Literal, Span, TokenStream, TokenTree};
-use quote::{quote, ToTokens};
+use proc_macro2::{Group, TokenStream, TokenTree};
+use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Ident, Lit, LitInt,
+    Ident, Lit,
 };
-
-/// MacroIf is a struct that represents the if statement in the macro.
-///
-///
-/// ```rust
-/// macro_if! {
-///     if condition {
-///         if_true
-///     } else {
-///         if_false
-///     }
-/// }
-/// ```
-struct MacroIf {
-    pub condition: syn::Expr,
-    pub if_true: proc_macro2::TokenStream,
-    pub if_false: proc_macro2::TokenStream,
-}
-
-impl Parse for MacroIf {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let _ = input.parse::<syn::Token![if]>()?;
-        let condition = input.parse::<syn::Expr>()?;
-        let content;
-        let _ = syn::braced!(content in input);
-        let if_true = content.parse()?;
-        let _ = input.parse::<syn::Token![else]>()?;
-        let content;
-        let _ = syn::braced!(content in input);
-        let if_false = content.parse()?;
-        Ok(Self {
-            condition,
-            if_true,
-            if_false,
-        })
-    }
-}
-
-#[cfg(feature = "nightly")]
-#[proc_macro]
-pub fn macro_if(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = proc_macro2::TokenStream::from(input);
-    let if_stmt = syn::parse2::<MacroIf>(input).unwrap();
-
-    let condition_tokens: proc_macro::TokenStream = if_stmt.condition.to_token_stream().into();
-    let condition = match condition_tokens.expand_expr() {
-        Ok(expr) => expr,
-        Err(_) => {
-            return quote! {
-                compile_error!("failed to expand macro_if condition");
-            }
-            .into();
-        }
-    };
-
-    let lit_bool = match syn::parse::<syn::LitBool>(condition) {
-        Ok(lit_bool) => lit_bool,
-        Err(_) => {
-            return quote! {
-                compile_error!("failed to parse macro_if condition as a boolean literal");
-            }
-            .into();
-        }
-    };
-
-    if lit_bool.value {
-        if_stmt.if_true.to_token_stream().into()
-    } else {
-        if_stmt.if_false.to_token_stream().into()
-    }
-}
 
 #[derive(Clone)]
 enum MatchPattern {
@@ -160,17 +87,6 @@ impl Parse for MatchPattern {
     }
 }
 
-/// A result of matchin on a pattern
-enum MatchResult<'a> {
-    /// A single identifier matcched.
-    Ident(&'a syn::Ident),
-    /// Regex pattern matched, returns the captures.
-    Regex(lazy_regex::Captures<'a>),
-    /// Tuple pattern matched, returns result for nested patterns.
-    Tuple(Vec<MatchResult<'a>>),
-    Default,
-}
-
 /// A value we match on inside `match_ident!`.
 ///
 /// Current variants are:
@@ -185,69 +101,20 @@ impl std::fmt::Display for MatchOn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ident(ident) => write!(f, "{}", ident),
-            Self::Tuple(values) => write!(f, "{}", values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
+            Self::Tuple(values) => write!(
+                f,
+                "{}",
+                values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
-}
-
-enum MatchReturn<T> {
-    NoMatch,
-    Single(T),
-    Tuple(Vec<Self>),
 }
 
 impl MatchPattern {
-    pub fn try_match<F, T>(&self, input: &MatchOn, f: &mut F) -> syn::Result<MatchReturn<T>>
-    where
-        F: FnMut(&MatchResult) -> syn::Result<T>,
-    {
-        match self {
-            Self::Default => f(&MatchResult::Default).map(MatchReturn::Single),
-            Self::Identifier(identifier) => match input {
-                MatchOn::Ident(ident) => {
-                    if ident == identifier {
-                        f(&MatchResult::Ident(identifier)).map(MatchReturn::Single)
-                    } else {
-                        Ok(MatchReturn::NoMatch)
-                    }
-                }
-                _ => Ok(MatchReturn::NoMatch),
-            },
-            Self::Regex(regex) => match input {
-                MatchOn::Ident(ident) => {
-                    let s = ident.to_string();
-                    if let Some(captures) = regex.captures(&s) {
-                        f(&MatchResult::Regex(captures)).map(MatchReturn::Single)
-                    } else {
-                        Ok(MatchReturn::NoMatch)
-                    }
-                }
-                _ => Ok(MatchReturn::NoMatch),
-            },
-            Self::Or(first, second) => match first.try_match(input, f)? {
-                MatchReturn::NoMatch => second.try_match(input, f),
-                result => return Ok(result),
-            },
-
-            Self::Tuple(patterns) => match input {
-                MatchOn::Ident(_) => Ok(MatchReturn::NoMatch),
-                MatchOn::Tuple(values) => {
-                    if values.len() != patterns.len() {
-                        return Ok(MatchReturn::NoMatch);
-                    }
-                    let mut results = Vec::with_capacity(patterns.len());
-                    for (pattern, value) in patterns.iter().zip(values) {
-                        match pattern.try_match(value, f)? {
-                            MatchReturn::NoMatch => return Ok(MatchReturn::NoMatch),
-                            ret => results.push(ret),
-                        }
-                    }
-                    Ok(MatchReturn::Tuple(results))
-                }
-            },
-        }
-    }
-
     pub fn is_match(&self, input: &MatchOn) -> syn::Result<Option<Self>> {
         match self {
             Self::Default => Ok(Some(self.clone())),
@@ -259,7 +126,7 @@ impl MatchPattern {
             Self::Regex(regex) => match input {
                 MatchOn::Ident(ident) => {
                     let s = ident.to_string();
-                   
+
                     if let Some(_c) = regex.captures(&s) {
                         Ok(Some(self.clone()))
                     } else {
@@ -331,11 +198,10 @@ pub fn ident_matches(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         }
     };
 
-    match pattern.try_match(&value, &mut |_| Ok(())) {
+    match pattern.is_match(&value) {
+        Ok(Some(_)) => quote! { true }.into(),
+        Ok(None) => quote! { false }.into(),
         Err(err) => return err.to_compile_error().into(),
-        Ok(MatchReturn::Single(_)) => quote! { true }.into(),
-        Ok(MatchReturn::NoMatch) => quote! { false }.into(),
-        Ok(MatchReturn::Tuple(_)) => quote! { true }.into(),
     }
 }
 
