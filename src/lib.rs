@@ -184,7 +184,6 @@ impl Parse for Matches {
         let value = input.parse::<MatchOn>()?;
         let _ = input.parse::<syn::Token![,]>()?;
         let pattern = input.parse::<MatchPattern>()?;
-        println!("pattern: {}", pattern);
         Ok(Self { value, pattern })
     }
 }
